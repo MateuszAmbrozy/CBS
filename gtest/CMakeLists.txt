@@ -1,18 +1,10 @@
-cmake_minimum_required(VERSION 3.8)
-
-# Set the project name
-set(This ExampleTest)
-
-set(Sources
-    tests.cpp
-)
-
-add_executable(${This} ${Sources})
-target_link_libraries(${This} PUBLIC
-    gtest_main
-    Example
-)
-add_test(
-    NAME ${This}
-    COMMAND ${This}
-)
+add_executable(cbs_tests tests.cpp)
+if(TARGET GTest::gtest_main)
+    target_link_libraries(cbs_tests PRIVATE cbs GTest::gtest_main)
+elseif(TARGET GTest::Main)
+    target_link_libraries(cbs_tests PRIVATE cbs GTest::Main)
+else()
+    target_link_libraries(cbs_tests PRIVATE cbs gtest_main)
+endif()
+include(GoogleTest)
+gtest_discover_tests(cbs_tests DISCOVERY_TIMEOUT 10 PROPERTIES TIMEOUT 15)

@@ -1,0 +1,16 @@
+/build*/
+*.exe
+*.o
+*.obj
+*.a
+*.lib
+*.pdb
+
+# Local tooling and operating system files
+.agents/
+.codex/
+.aws/
+.DS_Store
+Thumbs.db
+CMakeUserPresets.json
+compile_commands.json

@@ -1,79 +1,78 @@
 #include "HighLevel.h"
+#include "LowLevel.h"
 
-HighLevel::HighLevel(Map &map, const std::vector<Constraint>& constraints)
-{
-    this->map = map;
-    CT = std::make_unique<ConstraintTree>(map);
+#include <algorithm>
+#include <queue>
+#include <set>
+#include <tuple>
 
-    root->constraints = constraints; //ale one powinny byc chyba zerowe na początku
-    root->solution = ConstraintTree::findInitialSolution(constraints);  // Find initial paths
-    root->updateCost();  // Calculate cost of the initial solution
-    openList.push(root);
+namespace {
+using ConstraintKey = std::tuple<int, int, int, int, bool, int, int>;
+std::vector<ConstraintKey> signature(const std::vector<Constraint>& constraints) {
+    std::vector<ConstraintKey> result;
+    for (const auto& c : constraints)
+        result.emplace_back(c.agentID, c.time, c.position.x, c.position.y, c.isEdge,
+                            c.isEdge ? c.from.x : 0, c.isEdge ? c.from.y : 0);
+    std::sort(result.begin(), result.end());
+    result.erase(std::unique(result.begin(), result.end()), result.end());
+    return result;
+}
 }
 
-std::vector<std::vector<Cell>> HighLevel::solve()
-{
+HighLevel::HighLevel(const Map& map, const std::vector<Constraint>& constraints, SearchLimits limits)
+    : map_(map), constraints_(constraints), limits_(limits) {
+    validateProblem(map_, constraints_);
+}
 
-    while(!openList.empty())
-    {
-        auto P = openList.top();  // Get the node with the lowest cost
-        openList.pop();
-
-        if(!ConstraintTree::detectConflicts(*P) && !ConstraintTree::hasEdgeConflict(*P))
-        {
-            return P->solution;
+std::vector<std::vector<Cell>> HighLevel::solve() {
+    status_ = SearchStatus::NoSolution;
+    // These collisions are unavoidable under stay-at-goal semantics.
+    for (std::size_t i = 0; i < map_.agents.size(); ++i)
+        for (std::size_t j = i + 1; j < map_.agents.size(); ++j)
+            if (map_.agents[i].start == map_.agents[j].start || map_.agents[i].goal == map_.agents[j].goal)
+                return {};
+    LowLevel planner(limits_);
+    auto root = std::make_shared<TreeNode>();
+    root->constraints = constraints_;
+    root->solution = planner.getPaths(constraints_, map_);
+    if (planner.status() != SearchStatus::Success) { status_ = planner.status(); return {}; }
+    root->updateCost();
+    std::priority_queue<std::shared_ptr<TreeNode>, std::vector<std::shared_ptr<TreeNode>>, CompareNodes> open;
+    open.push(root);
+    std::set<std::vector<ConstraintKey>> seen;
+    seen.insert(signature(constraints_));
+    std::size_t expanded = 0;
+    while (!open.empty()) {
+        if (expanded >= limits_.maxHighLevelNodes) { status_ = SearchStatus::ResourceLimit; return {}; }
+        ++expanded;
+        auto node = open.top();
+        open.pop();
+        Conflict conflict;
+        if (!ConstraintTree::getFirstConflict(*node, conflict)) {
+            status_ = SearchStatus::Success;
+            return node->solution;
         }
-
-        Conflict C = ConstraintTree::getFirstConflict(*P);
-        if(ConstraintTree::detectConflicts(*P))
-        {
-            std::cout<<"Normal conflict (" << C.pos1.position.x << ", " << C.pos1.position.y << ")\n";
-            for (int i = 0; i < 2; ++i) 
-            {  
-                auto child = P->addConstraint(Constraint(C.agent1, C.pos1.position, C.time));
-                if(i==1)
-                {
-                    auto child = P->addConstraint(Constraint(C.agent1, C.pos1.position, C.time));
-                }
-                child->updateSolution(map, P->solution, P->cost);
-                child->updateCost();
-
-                // 25. Insert the node into OPEN if a valid solution was found.
-                if (child->cost < DBL_MAX) {
-                    openList.push(child);
-                }
+        for (int branch = 0; branch < 2; ++branch) {
+            const auto index = branch == 0 ? conflict.agent1 : conflict.agent2;
+            const int id = map_.agents[index].id;
+            auto constraint = conflict.isEdge
+                ? Constraint::edge(id, branch == 0 ? conflict.pos1 : conflict.pos2,
+                                   branch == 0 ? conflict.pos2 : conflict.pos1, conflict.time)
+                : Constraint(id, conflict.pos1, conflict.time);
+            auto child = std::make_shared<TreeNode>(*node);
+            child->constraints.push_back(constraint);
+            if (!seen.insert(signature(child->constraints)).second) continue;
+            auto path = planner.aStarSearch(map_, id, child->constraints);
+            // An unresolved bounded search cannot be discarded as proven infeasible.
+            if (planner.status() == SearchStatus::ResourceLimit) {
+                status_ = SearchStatus::ResourceLimit;
+                return {};
             }
-        }
-        else if(ConstraintTree::hasEdgeConflict(*P))
-        {
-            std::cout<<"Edge conflict (" << C.pos1.position.x << ", " << C.pos1.position.y << ")\n";
-            for (int i = 0; i < 2; ++i) 
-            {
-                
-                auto child = P->addConstraint(Constraint(C.agent1, C.pos1.position, C.time-1));
-                auto child1 = P->addConstraint(Constraint(C.agent1, C.pos2.position, C.time));
-
-                if(i==1)
-                {
-                    child = P->addConstraint(Constraint(C.agent2, C.pos2.position, C.time-1));
-                    child1 = P->addConstraint(Constraint(C.agent2, C.pos1.position, C.time));
-                }
-//child
-                child->updateSolution(map, P->solution, P->cost);  // Update solution
-                child->updateCost();  // Update cost after generating the solution
-
-                if (child->cost < DBL_MAX) {
-                    openList.push(child);
-                }
-
-//child 1
-                child1->updateSolution(map, P->solution, P->cost);  // Update solution
-                child1->updateCost();  // Update cost after generating the solution
-                if (child1->cost < DBL_MAX) {
-                    openList.push(child1);
-                }
-            }
+            if (planner.status() != SearchStatus::Success) continue;
+            child->solution[index] = std::move(path);
+            child->updateCost();
+            open.push(std::move(child));
         }
     }
-    return std::vector<std::vector<Cell>>();
+    return {};
 }

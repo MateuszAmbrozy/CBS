@@ -1,17 +1,17 @@
 #pragma once
-#include <iostream>
-#include <queue>
-#include "ConstraintTree.h"
-#include "util.h"
 
-class HighLevel
-{
-private:
-    Map map;
-    std::unique_ptr<ConstraintTree> CT;
-    std::priority_queue<std::shared_ptr<TreeNode>, std::vector<std::shared_ptr<TreeNode>>, CompareNodes> openList;
-    std::shared_ptr<TreeNode> root = std::make_shared<TreeNode>();
+#include "ConstraintTree.h"
+
+class HighLevel {
 public:
-    HighLevel(Map& map, const std::vector<Constraint>& constraints);
+    HighLevel(const Map& map, const std::vector<Constraint>& constraints = {},
+              SearchLimits limits = SearchLimits());
     std::vector<std::vector<Cell>> solve();
+    SearchStatus status() const { return status_; }
+
+private:
+    Map map_;
+    std::vector<Constraint> constraints_;
+    SearchLimits limits_;
+    SearchStatus status_ = SearchStatus::NotStarted;
 };

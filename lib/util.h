@@ -1,98 +1,76 @@
 #pragma once
+
+#include <cstddef>
 #include <vector>
-#include <map>
-#include <cfloat>
 
-
-class Position
-{
-public:
-    int x, y;
-
+struct Position {
+    int x;
+    int y;
     Position(int x = 0, int y = 0) : x(x), y(y) {}
-    bool operator==(const Position& other) const {
-        return other.x == x && other.y == y;
-    }
-
+    bool operator==(const Position& other) const { return x == other.x && y == other.y; }
+    bool operator!=(const Position& other) const { return !(*this == other); }
 };
-struct Cell { 
-    bool isObstacle = false;
+
+struct Cell {
     Position position;
-    double g = FLT_MAX, h = FLT_MAX, f = FLT_MAX; // Costs for A*
-    Cell* parent = nullptr;
-    int time = 1;
-
-    // Constructor with position and parent initialization
-    Cell(Position pos, double g = FLT_MAX, double h = FLT_MAX, double f = FLT_MAX, int time = 1, Cell* parent = nullptr)
-        : position(pos), g(g), h(h), f(f), parent(parent), time(time) {}
-
-
-    // Comparison operator for priority queue
-    bool operator<(const Cell& other) const {
-        return f > other.f; // Used by priority queue in A*
-    }
-
-    // Equality operator to compare cells based on position
-    bool operator==(const Cell& other) const {
-        return other.position == position;
-    }
+    bool isObstacle = false;
+    int time = 0;
+    explicit Cell(Position position = Position(), int time = 0) : position(position), time(time) {}
+    bool operator==(const Cell& other) const { return position == other.position; }
 };
 
-
-struct CompareCells {
-    bool operator()(const Cell a, const Cell b) const {
-        return a.f > b.f;
-    }
-};
-struct Agent
-{
+struct Agent {
     int id;
     Cell start;
     Cell goal;
-    std::vector<std::vector<Cell>> path;
-
-    Agent(int id, Position start, Position goal)
-         : id(id), start(start), goal(goal) {
-
-    }
-    bool move();
+    Agent(int id, Position start, Position goal) : id(id), start(start), goal(goal) {}
 };
 
-
-
-
-struct Conflict{
-
-    int agent1, agent2;
-    int time;
-    Cell pos1, pos2;
-
-    Conflict(int agent1, int agent2, int time, Cell pos1, Cell pos2)
-        :agent1(agent1), agent2(agent2), time(time), pos1(pos1), pos2(pos2)
-    {}
-    
-};
-
-
-
-
+// Edge constraints forbid from -> position at the specified arrival time.
 struct Constraint {
+    int agentID;
     Position position;
     int time;
-    int agentID;
+    bool isEdge = false;
+    Position from;
 
     Constraint(int agentID, Position position, int time)
         : agentID(agentID), position(position), time(time) {}
-
-    bool operator==(const Constraint& c) const {
-        return c.agentID == agentID && c.time == time && position == c.position;
+    static Constraint edge(int agentID, Position from, Position to, int arrivalTime) {
+        Constraint result(agentID, to, arrivalTime);
+        result.isEdge = true;
+        result.from = from;
+        return result;
+    }
+    bool operator==(const Constraint& other) const {
+        return agentID == other.agentID && position == other.position && time == other.time &&
+               isEdge == other.isEdge && (!isEdge || from == other.from);
     }
 };
 
-
+struct Conflict {
+    // Agent fields are path indices; constraints use Agent::id instead.
+    std::size_t agent1 = 0;
+    std::size_t agent2 = 0;
+    int time = 0;
+    Position pos1;
+    Position pos2;
+    bool isEdge = false;
+};
 
 struct Map {
+    // Rectangular grid indexed by cells[x][y].
     std::vector<std::vector<Cell>> cells;
     std::vector<Agent> agents;
 };
 
+enum class SearchStatus { NotStarted, Success, NoSolution, ResourceLimit };
+
+struct SearchLimits {
+    std::size_t maxHighLevelNodes = 10000;
+    std::size_t maxLowLevelStates = 1000000;
+};
+
+// Invalid maps and constraints throw std::invalid_argument.
+void validateProblem(const Map& map, const std::vector<Constraint>& constraints);
+bool isTraversable(const Map& map, Position position);
